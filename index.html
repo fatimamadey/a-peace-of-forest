@@ -11,6 +11,20 @@
   let IDLE_TIME_LIMIT = 10 // time before decay starts
   let TIME = 0
   
+  // ─────── For Presentation ───────
+  const seasonTimeCombos = [
+    { season: 'spring', isDayTime: true },
+    { season: 'spring', isDayTime: false },
+    { season: 'summer', isDayTime: true },
+    { season: 'summer', isDayTime: false },
+    { season: 'fall', isDayTime: true },
+    { season: 'fall', isDayTime: false },
+    { season: 'winter', isDayTime: true },
+    { season: 'winter', isDayTime: false }
+  ];
+  let comboIndex = 0
+  const PRESENTATION_MODE = false
+  
   // ─────── STATE VARIABLES ───────
   let growingBranches = []
   let leaves = []
@@ -48,26 +62,35 @@
   }
   
   function setBackgroundFromDateTime() {
-    const now = new Date()
-    const month = now.getMonth() // 0 = Jan
-    const hour = now.getHours() // 0 -23
-    season = getSeason(month)
-    let timeOfDay = getTimeOfDay(hour)
-    
+    if (PRESENTATION_MODE) {
+      const combo = seasonTimeCombos[comboIndex % seasonTimeCombos.length];
+      season = combo.season;
+      isDayTime = combo.isDayTime;
+    } else {
+      const now = new Date();
+      const month = now.getMonth();
+      const hour = now.getHours();
+      season = getSeason(month);
+      isDayTime = hour >= 6 && hour < 18;
+    }
+
+    const timeOfDay = isDayTime ? 'day' : 'night';
+
     if (season === 'spring') {
-      backgroundColor = timeOfDay === 'day' ? '#d0f0c0' : '#002b36'
-      leafColors = springColors
+      backgroundColor = timeOfDay === 'day' ? '#d0f0c0' : '#002b36';
+      leafColors = springColors;
     } else if (season === 'summer') {
-      backgroundColor = timeOfDay === 'day' ? '#87ceeb' : '#002b36'
-      leafColors = summerColors
+      backgroundColor = timeOfDay === 'day' ? '#87ceeb' : '#002b36';
+      leafColors = summerColors;
     } else if (season === 'fall') {
-      backgroundColor = timeOfDay === 'day' ? '#f4a261' : '#002b36'
-      leafColors = fallColors
+      backgroundColor = timeOfDay === 'day' ? '#f4a261' : '#002b36';
+      leafColors = fallColors;
     } else if (season === 'winter') {
-      backgroundColor = timeOfDay === 'day' ? '#e0f7fa' : '#002b36'
-      leafColors = winterColors
+      backgroundColor = timeOfDay === 'day' ? '#e0f7fa' : '#002b36';
+      leafColors = winterColors;
     }
   }
+
   
   // ─────── BRANCH + LEAF CREATION LOGIC ───────
   function createBranch(x, y, angle, length, depth) {
@@ -277,6 +300,7 @@
       growingBranches.push(...newBranches)
       leaves.forEach(growLeaf)
     }
+
   }
 
   function setup() {
@@ -303,6 +327,14 @@
     resetButton.on('click', () => {
       location.reload();
     })
+    if (PRESENTATION_MODE) {
+      setInterval(() => {
+        comboIndex++;
+        paper.project.clear(); // clear canvas
+        setBackgroundFromDateTime(); // update season/time
+        setupTree(); // re-render tree
+      }, 20000); // 8 seconds per combo
+    }
   }
   nn.on('load', setup)
 </script>
