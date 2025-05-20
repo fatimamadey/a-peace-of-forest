@@ -1,0 +1,308 @@
+<script src="https://cdn.jsdelivr.net/gh/netizenorg/netnet-standard-library/build/nn.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.15/paper-full.min.js"></script>
+
+<script>
+  /* global nn, paper */
+  const INITIAL_TRUNK_LENGTH = 180 // inital trunk size
+  const LENGTH_SCALE = 0.7 // scaling factor for branch offs
+  const BRANCH_ANGLE = Math.PI / 6 * 2 // angle btwn child and parent branch
+  let BRANCH_COUNT = 2 // number of childern
+  const MAX_DEPTH = 6 // maximum recursion depth
+  let IDLE_TIME_LIMIT = 10 // time before decay starts
+  let TIME = 0
+  
+  // ─────── STATE VARIABLES ───────
+  let growingBranches = []
+  let leaves = []
+  let allLeavesGone = false
+  let fallingLeaves = []
+  let fallBatchTimer = 0
+  const fallBatchInterval = 60
+  const fallBatchSize = 5
+  
+  // ─────── COLORS ───────
+  const summerColors = ['#4caf50', '#81c784', '#388e3c', '#66bb6a']
+  const fallColors = ['#e07a5f', '#f2cc8f', '#d08c60', '#b5651d']
+  const springColors = ['#f8bbd0',  '#fce4ec', '#ffc1e3', '#dda0dd']
+  const winterColors = ['#b0bec5','#90a4ae','#bdbdbd', '#607d8b']
+  
+   let leafColors = []
+   let backgroundColor = ''
+   let season = ''
+   let isDayTime = false
+  
+   // ─────── GET SEASON AND TIME OF DAY ───────
+  function getSeason(month) {
+    if (month >= 2 && month <= 4) return 'spring'
+    if (month >= 5 && month <= 7) return 'summer'
+    if (month >= 8 && month <= 10) return 'fall'
+    return 'winter';
+  }
+  
+  function getTimeOfDay(hour) {
+    if (hour >= 6 && hour < 18){
+      isDayTime = true
+      return 'day'
+    } 
+    return 'night'
+  }
+  
+  function setBackgroundFromDateTime() {
+    const now = new Date()
+    const month = now.getMonth() // 0 = Jan
+    const hour = now.getHours() // 0 -23
+    season = getSeason(month)
+    let timeOfDay = getTimeOfDay(hour)
+    
+    if (season === 'spring') {
+      backgroundColor = timeOfDay === 'day' ? '#d0f0c0' : '#002b36'
+      leafColors = springColors
+    } else if (season === 'summer') {
+      backgroundColor = timeOfDay === 'day' ? '#87ceeb' : '#002b36'
+      leafColors = summerColors
+    } else if (season === 'fall') {
+      backgroundColor = timeOfDay === 'day' ? '#f4a261' : '#002b36'
+      leafColors = fallColors
+    } else if (season === 'winter') {
+      backgroundColor = timeOfDay === 'day' ? '#e0f7fa' : '#002b36'
+      leafColors = winterColors
+    }
+  }
+  
+  // ─────── BRANCH + LEAF CREATION LOGIC ───────
+  function createBranch(x, y, angle, length, depth) {
+    return {
+      start: new paper.Point(x, y),
+      angle,
+      length,
+      depth,
+      progress: 0,
+      path: new paper.Path({ strokeColor: 'black', strokeWidth: depth * 2 }),
+    }
+  }
+
+  function createLeaf(position) {
+    const color = new paper.Color(nn.random(leafColors))
+    color.alpha = 0.8
+    // randomize size
+    const targetWidth = nn.random(10, 20)
+    const targetHeight = nn.random(5, 12)
+    // randomize angle
+    const angle = nn.random(0, 360)
+    const shape = new paper.Path.Ellipse({ 
+      center: [0, 0], 
+      size: [1, 1], 
+      fillColor: color })
+    shape.rotate(angle)
+    shape.position = position
+    return {
+      shape,
+      targetSize: [targetWidth, targetHeight],
+      growthProgress: 0,
+      angle,
+      center: position,
+    }
+  }
+
+  function addLeavesAtBranchEnd(endPoint) {
+    const count = nn.randomInt(3, 6);
+    for (let i = 0; i < count; i++) {
+      const offset = new paper.Point({ 
+        angle: nn.random(0, 360), 
+        length: nn.random(0, 10) })
+      leaves.push(createLeaf(endPoint.add(offset)))
+    }
+  }
+
+  function createChildrenBranches(parent, endPoint) {
+    // for the second branch split into 3 since there was a big gap initially
+    let splitCount = parent.depth === MAX_DEPTH ? 3 : BRANCH_COUNT
+    // to hold the branches
+    const branches = []
+    for (let i = 0; i < splitCount; i++) {
+      const direction = i - (splitCount - 1) / 2
+      const angleOffset = BRANCH_ANGLE * direction
+      const angle = parent.angle + angleOffset
+      let newLength = parent.length * LENGTH_SCALE
+      if (parent.depth === MAX_DEPTH) newLength *= 0.6
+      const child = createBranch(endPoint.x, endPoint.y, angle, newLength, parent.depth - 1)
+      child.path.add(endPoint)
+      branches.push(child)
+    }
+    return branches
+  }
+  
+  // ─────── ANIMATE LEAF GROWTH ───────
+  function growLeaf(leafObj) {
+    if (leafObj.growthProgress < 1) {
+      leafObj.growthProgress += 0.02;
+      const w = leafObj.targetSize[0] * leafObj.growthProgress
+      const h = leafObj.targetSize[1] * leafObj.growthProgress
+      leafObj.shape.remove() // and replace with larger ellipse
+      const newLeaf = new paper.Path.Ellipse({
+        center: [0, 0],
+        size: [w, h],
+        fillColor: leafObj.shape.fillColor,
+      })
+      newLeaf.rotate(leafObj.angle)
+      newLeaf.position = leafObj.center
+      leafObj.shape = newLeaf
+    }
+  }
+  
+  // ─────── LEAF DECAY ───────
+  function startDecay() {
+    if (!allLeavesGone) {
+      fallBatchTimer++;
+      if (fallBatchTimer >= fallBatchInterval && leaves.length > 0) {
+        fallBatchTimer = 0;
+        leaves = nn.shuffle(leaves) // so they randomly fall
+        const batch = leaves.splice(0, fallBatchSize)
+        fallingLeaves.push(...batch)
+      }
+
+      let stillFalling = []
+      fallingLeaves.forEach((leaf) => {
+        if (leaf.shape.position.y < nn.height - 200) {
+          // falling animation to look like it's kind floating
+          leaf.shape.position.y += nn.random(0.3, 0.6)
+          leaf.shape.position.x += nn.random(-0.2, 0.2)
+        } else {
+          // fade out
+          leaf.shape.fillColor.alpha -= 0.005
+        }
+
+        if (leaf.shape.fillColor.alpha > 0) {
+          stillFalling.push(leaf)
+        } else {
+          leaf.shape.remove()
+        }
+      })
+
+      fallingLeaves = stillFalling
+    }
+  }
+  
+  // ─────── INITIALIZE TREE AND RENDER ───────
+  function setupTree() {
+    const canvas = nn.create('canvas')
+      .set({ width: nn.width, height: nn.height })
+      .position(0, 0)
+      .addTo('body')
+    paper.setup(canvas)
+    
+    // background setup
+    const baseGroundColors = {
+      spring: '#f4e8d3',
+      summer: '#c8e6c9',
+      fall: '#ffe0b2',
+      winter: '#e0e0e0',
+      default: '#cccccc'
+    }
+
+    let groundColor = new paper.Color(baseGroundColors[season] || baseGroundColors.default);
+
+    if (!isDayTime) {
+      // darken the color
+      groundColor = groundColor.multiply(new paper.Color(0.4, 0.4, 0.4)); // 40% brightness
+    }
+
+    // draw the ground rectangle
+    const ground = new paper.Path.Rectangle({
+      point: [0, nn.height - (nn.height/3)],
+      size: [paper.view.size.width, paper.view.size.height - (nn.height - nn.height/3)],
+      fillColor: groundColor,
+      locked: true
+    })
+    ground.sendToBack()
+
+    // add stars if it's night
+    if (!isDayTime) {
+      for (let i = 0; i < 100; i++) {
+        const x = nn.random(0, paper.view.size.width);
+        const y = nn.random(0, 200); 
+        const r = nn.random(0.5, 1.5);
+        new paper.Path.Circle({
+          center: [x, y],
+          radius: r,
+          fillColor: 'white',
+          opacity: nn.random(0.5, 1),
+          locked: true
+        })
+      }
+    }
+    
+    // sky background
+    const background = new paper.Path.Rectangle({
+      point: [0, 0],
+      size: [paper.view.size.width, paper.view.size.height],
+      fillColor: new paper.Color(backgroundColor),
+      locked: true
+    })
+    background.sendToBack()
+
+    // create root branch
+    const root = createBranch(nn.width / 2, nn.height - nn.height/4 , Math.PI / 2, INITIAL_TRUNK_LENGTH, MAX_DEPTH)
+    root.path.add(root.start)
+    growingBranches.push(root)
+
+    // animate frame by frame
+    paper.view.onFrame = () => {
+      TIME += 1
+      if (TIME >= IDLE_TIME_LIMIT * 60) {
+        startDecay()
+      }
+
+      const newBranches = []
+      for (let b of growingBranches) {
+        if (b.progress >= 1) continue
+        b.progress += 0.03
+
+        const end = b.start.add(
+          new paper.Point({
+            length: b.length * b.progress,
+            angle: -b.angle * (180 / Math.PI),
+          })
+        )
+
+        if (b.path.segments.length > 1) b.path.removeSegment(1)
+        b.path.add(end)
+
+        if (b.progress >= 1) {
+          if (b.depth > 1) newBranches.push(...createChildrenBranches(b, end))
+          if (b.depth <= MAX_DEPTH - 2) addLeavesAtBranchEnd(end)
+        }
+      }
+
+      growingBranches.push(...newBranches)
+      leaves.forEach(growLeaf)
+    }
+  }
+
+  function setup() {
+    setBackgroundFromDateTime()
+    setupTree()
+    
+    const resetButton = nn.create('button')
+      .content('⟲ Reset')
+      .css({
+        position: 'absolute',
+        bottom: '20px',
+        right: '20px',
+        padding: '10px 16px',
+        fontSize: '16px',
+        backgroundColor: '#ffffffdd',
+        border: '1px solid #aaa',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        zIndex: 1000
+      })
+      .addTo('body')
+
+    // reload the page on click
+    resetButton.on('click', () => {
+      location.reload();
+    })
+  }
+  nn.on('load', setup)
+</script>
